@@ -1,0 +1,4 @@
+{
+  "claude":   { "cmd": ["claude", "-p"], "timeout": 900 },
+  "deepseek": { "cmd": ["ollama", "run", "deepseek-r1"], "timeout": 1800 }
+}
