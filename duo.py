@@ -290,7 +290,16 @@ def main():
     ap.add_argument("--run-code", action="store_true",
                     help="ejecuta el código Python que escriban los modelos para comprobar cálculos (20 s máx., revisa antes)")
     ap.add_argument("--out", default="duo_output")
+    ap.add_argument("--ping", action="store_true", help="prueba rápida: pregunta 'OK' a cada modelo y sale")
     args = ap.parse_args()
+    if args.ping:
+        d = Duo(json.loads(Path(args.config).read_text()), Path(args.out), False)
+        for m in d.models:
+            try:
+                print(f"{m}: {d.ask(m, 'Responde solo con la palabra OK')[:80]!r}")
+            except Exception as e:
+                print(f"{m}: FALLO -> {e}")
+        return
     task = Path(args.file).read_text() if args.file else args.task
     if not task:
         ap.error("da una tarea o --file")
