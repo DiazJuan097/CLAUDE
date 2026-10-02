@@ -1,4 +1,0 @@
-{
-  "claude":   { "cmd": ["claude", "-p"], "timeout": 900 },
-  "deepseek": { "cmd": ["python3", "deepseek_api.py"], "timeout": 900 }
-}

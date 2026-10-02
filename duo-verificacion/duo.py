@@ -6,6 +6,7 @@ Flujo: generar (ambos, independientes) -> [ronda: extraer afirmaciones -> revisi
 -> fusión -> comprobación final sí/no por ambos -> FINAL.md + PENDIENTES.md.
 
 Cada modelo es un comando de shell (prompt por stdin, respuesta por stdout): ver duo.config.json.
+Autocontenido: solo necesita Python 3 y esta carpeta (duo.py, duo.config.json, deepseek_api.py). Sin git ni dependencias.
 
 Uso:
     python3 duo.py "tu tarea" [--rounds 3] [--run-code] [--out duo_output]
@@ -104,6 +105,18 @@ Responde cada pregunta con true/false de forma estricta:
 Responde SOLO un JSON: {{"checklist":{{{keys}}},"problemas":["..."]}}"""
 
 
+def resolve_cmd(cmd):
+    """{python} -> intérprete actual; archivos que viven junto a duo.py -> ruta absoluta (funciona desde cualquier carpeta)."""
+    here, out = Path(__file__).resolve().parent, []
+    for part in cmd:
+        if part == "{python}":
+            part = sys.executable
+        elif not Path(part).is_absolute() and (here / part).is_file():
+            part = str(here / part)
+        out.append(part)
+    return out
+
+
 def parse_json(text):
     dec, best, best_end = json.JSONDecoder(), None, -1
     for m in re.finditer(r"[\[{]", text):
@@ -134,7 +147,7 @@ class Duo:
     def ask(self, model, prompt):
         c = self.cfg[model]
         for _ in range(2):
-            p = subprocess.run(c["cmd"], input=prompt, capture_output=True, text=True,
+            p = subprocess.run(resolve_cmd(c["cmd"]), input=prompt, capture_output=True, text=True,
                                timeout=c.get("timeout", 900))
             txt = re.sub(r"<think>.*?</think>", "", p.stdout, flags=re.S).strip()
             if p.returncode == 0 and txt:
@@ -285,7 +298,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("task", nargs="?")
     ap.add_argument("--file")
-    ap.add_argument("--config", default=str(Path(__file__).with_name("duo.config.json")))
+    ap.add_argument("--config", default=str(Path(__file__).resolve().with_name("duo.config.json")))
     ap.add_argument("--rounds", type=int, default=3)
     ap.add_argument("--run-code", action="store_true",
                     help="ejecuta el código Python que escriban los modelos para comprobar cálculos (20 s máx., revisa antes)")
