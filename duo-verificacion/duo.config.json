@@ -1,4 +1,5 @@
 {
   "claude":   { "cmd": ["claude", "-p"], "timeout": 900 },
-  "deepseek": { "cmd": ["{python}", "deepseek_api.py"], "timeout": 900 }
+  "deepseek": { "cmd": ["{python}", "deepseek_api.py"], "timeout": 900 },
+  "_roles":   { "aligner": "deepseek", "merger": "claude" }
 }

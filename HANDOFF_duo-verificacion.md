@@ -1,101 +1,105 @@
-# Traspaso: skill "duo-verificacion" (Claude + DeepSeek)
+# Traspaso: skill "duo-verificacion" (Claude + DeepSeek) — v3 eficiente
 
 > Pega TODO este documento en un chat nuevo de Claude y escribe después tus preguntas técnicas.
-> Instrucción para el Claude que lo lea: eres quien continuará construyendo esta skill. Lee todo,
-> no inventes funciones, flags ni APIs (si no estás seguro de que algo existe, dilo y sugiere
-> verificarlo en la documentación oficial), y cuando propongas cambios entrega el ARCHIVO COMPLETO
-> modificado (no diffs), indicando cuál archivo es.
+> Instrucción para el Claude que lo lea: continuarás construyendo esta skill. Lee todo, no inventes funciones,
+> flags ni APIs (si no estás seguro de que algo existe, dilo y sugiere verificarlo en la documentación oficial),
+> y entrega el ARCHIVO COMPLETO modificado (no diffs), indicando cuál es.
 
 ## 1. Objetivo
-Que Claude y DeepSeek hagan EL MISMO trabajo, se revisen entre sí de forma rigurosa, iteren
-(limpiar datos, verificar datos y confiabilidad, analizar, corregir, calificar), unifiquen un solo
-entregable mejor redactado y al final ambos lo verifiquen. Debe quedar como skill reutilizable de Claude Code.
+Que Claude y DeepSeek hagan EL MISMO trabajo y el resultado sea realmente mejor que usar un solo modelo,
+gastando pocos tokens: ambos trabajan en paralelo e independientes; se compara y se gasta solo en lo que discrepan;
+verificación con código; un entregable unificado; informe de qué aportó el segundo modelo y qué queda sin verificar.
 
 ## 2. Restricciones del usuario (obligatorias)
-- Todo se usará en Claude Code SIN repositorio de GitHub: el código no puede referenciar ningún repositorio,
-  rama ni rutas del entorno donde se creó. Debe ser autocontenido (una carpeta con 4 archivos, solo Python 3 estándar).
-- La skill NO debe publicarse ni instalarse hasta que el usuario lo diga explícitamente.
-- La clave de DeepSeek va solo en la variable de entorno DEEPSEEK_API_KEY; nunca en archivos ni en el chat.
-- Preferencia del usuario: verdad y precisión sobre utilidad. Señalar incertidumbre, no inventar fuentes,
-  cifras, nombres de funciones ni sintaxis; si algo es dudoso, decir que hay que verificarlo.
+- Se usará en Claude Code SIN repositorio de GitHub: nada puede referenciar repositorios, ramas ni rutas del entorno de creación.
+  Carpeta autocontenida (4 archivos, solo Python 3 estándar).
+- La skill NO se publica ni instala hasta que el usuario lo diga.
+- La clave de DeepSeek solo en la variable de entorno DEEPSEEK_API_KEY; nunca en archivos ni en el chat.
+- Prioridad: ahorrar tokens SIN perder calidad, y que de verdad sea distinto a usar un solo modelo.
+- Preferencia del usuario: verdad y precisión sobre utilidad; señalar incertidumbre; no inventar fuentes, cifras, funciones ni sintaxis.
 - El usuario habla español.
 
-## 3. Decisiones de diseño y por qué
-- Cada modelo es un comando de shell (prompt por stdin, respuesta por stdout) definido en duo.config.json.
-  Así funciona con `claude -p` (Claude Code en modo no interactivo) y con la API de DeepSeek vía deepseek_api.py.
-- Por qué NO es un simple "se califican 1-10 y se mezcla": los modelos tienden a coincidir y dar notas altas
-  (errores correlados); la fusión puede "lavar" errores; reescribir todo en cada ronda introduce errores nuevos.
-- Por eso: (a) revisión por AFIRMACIONES comprobables, ciega entre modelos; (b) foco en desacuerdos;
-  (c) evidencia externa con código Python opcional (--run-code, 20 s máx., ejecuta código escrito por modelos: riesgo a revisar);
-  (d) parches puntuales de texto exacto en vez de reescrituras; (e) checklist sí/no de 5 puntos en vez de nota 1-10;
-  (f) el bucle se detiene cuando una ronda no encuentra problemas nuevos o llega al máximo de rondas;
-  (g) lo no comprobable va a PENDIENTES.md para revisión humana.
-- Idea clave: que ambos aprueben NO prueba que sea verdad; hay que decirlo siempre.
+## 3. Diseño (v3) y por qué
+- Un solo modelo con revisión propia comparte sus puntos ciegos; dos modelos aportan valor sobre todo donde DISCREPAN.
+  Por eso el gasto se concentra en las disputas, no en revisar todo entre ambos.
+- Flujo: (1) ambos generan trabajo + lista de afirmaciones EN LA MISMA llamada; (2) una llamada alinea afirmaciones A vs B
+  (acuerdo/conflicto/solo_a/solo_b); (3) se arbitran solo las disputas (conflictos + afirmaciones de riesgo alto que solo dijo uno):
+  revisión ciega con etiquetas X/Y y orden invertido por modelo; si no coinciden, ronda de refutación (--rounds, por defecto 2);
+  (4) fusión (1 llamada) aplicando decisiones; lo no resuelto queda "(no verificado)"; (5) comprobación final sí/no por el OTRO modelo.
+- Llamadas típicas: 5 a 10 con cargas pequeñas (estimación por diseño; se mide en INFORME.md en caracteres, no tokens).
+- Evidencia: código Python opcional (--run-code, 20 s, ejecuta código escrito por modelos: riesgo a revisar). Solo el código cuenta como prueba.
+- Honestidad incorporada: INFORME.md dice cuántas discrepancias aportó el 2.º modelo y avisa si no aportó nada;
+  lista las coincidencias de riesgo alto sin verificación externa (el acuerdo no prueba verdad).
+- Roles configurables en duo.config.json (_roles: aligner, merger). El que no fusiona hace la comprobación final.
+- Inspiración (proyectos de terceros, no verificados a fondo): howardpen9/deepseek-skill, sdsrss/moa-skill (su README dice que no sirve
+  para problemas objetivos verificables), mikhin/agent-skills (debate por refutación).
+- Datos de la documentación de skills de Claude Code (resumen automático, contrastar): SKILL.md con frontmatter; ruta personal
+  ~/.claude/skills/NOMBRE/SKILL.md; variable ${CLAUDE_SKILL_DIR}; campo disable-model-invocation.
 
-## 4. Flujo de duo.py
-1 generar (ambos, independiente) -> 2 por ronda: extraer afirmaciones (JSON) -> revisión ciega cruzada (OK/ERROR/UNVERIFIED)
--> alinear afirmaciones A vs B (acuerdo/conflicto/solo_a/solo_b) -> evidencia con código (opcional) -> parches ->
-3 fusión (un modelo, sin afirmaciones nuevas) -> 4 checklist final sí/no por ambos (1 reintento con parche) ->
-salidas en ./duo_output: FINAL.md, PENDIENTES.md, changelog.json, log.txt y archivos por ronda.
-Uso: `python3 duo.py "tarea" --rounds 3 [--run-code]`, `python3 duo.py --ping` (prueba rápida de ambos modelos), `--file tarea.txt`.
+## 4. Estado real (honesto)
+Probado con modelos SIMULADOS: flujo completo (incluida 2.ª ronda y código), caso sin disputas, comando inexistente, timeout, desde otra carpeta;
+adaptador deepseek_api.py contra servidor HTTP falso; `claude -p` respondió "OK" en el entorno de creación.
+NO probado: API real de DeepSeek; calidad real del JSON de los modelos; costo/tiempo reales; que el alineamiento de afirmaciones por LLM sea fiable.
+A confirmar en documentación oficial: modelo DeepSeek vigente (`deepseek-chat` por defecto, DEEPSEEK_MODEL), URL base https://api.deepseek.com
+y /chat/completions, ${CLAUDE_SKILL_DIR}, y qué herramientas puede usar `claude -p` (restringirlas).
 
-## 5. Estado real (honesto)
-Probado: el flujo completo con modelos SIMULADOS (JSON, parches, ejecución de código, checklist); el adaptador
-deepseek_api.py contra un servidor HTTP local falso; ejecución desde otra carpeta; `claude -p` respondió "OK" en el
-entorno donde se creó.
-NO probado: con la API real de DeepSeek (el usuario aún debe probar con su clave); calidad real del JSON que
-devuelven los modelos reales (modelos pequeños pueden devolver JSON inválido: se reintenta una vez y si falla se omite el paso);
-rendimiento/costo reales (con 3 rondas son decenas de llamadas).
-NO verificado (confirmar en documentación oficial): nombre vigente del modelo DeepSeek (`deepseek-chat` por defecto,
-cambiable con DEEPSEEK_MODEL); URL base https://api.deepseek.com y endpoint /chat/completions (formato tipo OpenAI);
-ruta de instalación de skills (~/.claude/skills/<nombre>/SKILL.md personal o .claude/skills/ por proyecto);
-si Claude Code ofrece una variable con la ruta de la propia skill (no se usó; el SKILL.md manda buscar duo.py).
+## 5. Pendientes / ideas
+- Probar con la clave real: `python3 duo.py --ping`, luego tarea corta con --rounds 1.
+- Búsqueda web compartida (mismas fuentes para ambos) para hechos sin cálculo.
+- Etiquetas anónimas también en la alineación; detección de adulación; escaneo de secretos antes de enviar (idea de moa-skill); modo rápido "audit" de una llamada.
+- Calibrar por tipo de tarea (datos, investigación, código, redacción) — preguntar al usuario qué hará.
+- Aviso de costo estimado previo (--dry-run) y límites de tamaño de entrada.
+- Instalar la skill SOLO cuando el usuario lo autorice.
 
-## 6. Pendientes / ideas abiertas
-- Preguntar al usuario qué tipos de trabajo hará (datos, investigación con fuentes, código, redacción) para calibrar la rúbrica.
-- Búsqueda web compartida: dar a AMBOS modelos las mismas fuentes recuperadas (hoy los hechos sin código quedan en PENDIENTES).
-- Mejorar el match de afirmaciones y la resolución de conflictos; decidir qué modelo hace la fusión (hoy siempre el primero de la config).
-- Robustez: manejo de respuestas largas/truncadas, costos, límites de tasa, Windows (usar `python` en vez de `python3`).
-- Terminar SKILL.md (descripción para que se active bien, instrucciones de ubicación de carpeta, ejemplos).
-- Cuando el usuario autorice: instalar la skill (carpeta duo-verificacion completa).
-
-## 7. Archivos (la carpeta duo-verificacion debe contener exactamente estos 4)
+## 6. Archivos (la carpeta duo-verificacion debe contener exactamente estos 4)
 
 ### Archivo: SKILL.md
 
 ````markdown
 ---
 name: duo-verificacion
-description: Ejecuta un mismo trabajo con dos modelos (Claude y DeepSeek), los hace verificarse entre sí por afirmaciones, corregir con parches puntuales, fusionar en un solo entregable y marcar pendientes para revisión humana. Úsala cuando el usuario pida que Claude y DeepSeek trabajen juntos, se revisen, se califiquen o unifiquen resultados.
+description: Hace que Claude y DeepSeek resuelvan el mismo trabajo de forma independiente, compara sus afirmaciones, arbitra solo los desacuerdos (con código cuando se pueda), fusiona en un único entregable y reporta qué aportó el segundo modelo y qué queda sin verificar. Úsala cuando el usuario pida que Claude y DeepSeek trabajen juntos, se revisen, se verifiquen entre sí o unifiquen resultados en un trabajo de análisis, datos, investigación o redacción donde un error cuesta caro. No la uses para preguntas simples ni cálculos que un script resuelve.
+disable-model-invocation: true
 ---
 
-# Dúo de verificación (Claude + DeepSeek)  — BORRADOR, en construcción
+# Dúo de verificación (Claude + DeepSeek) — BORRADOR
 
-## Cuándo usarla
-El usuario quiere que dos modelos hagan el mismo trabajo, se verifiquen mutuamente, iteren y entreguen un resultado unificado.
+## Qué la hace distinta de usar un solo modelo
+- Los dos modelos trabajan **sin verse** y entregan sus afirmaciones comprobables; el script compara y solo gasta tokens en **lo que discrepan**.
+- Los desacuerdos se arbitran a ciegas (etiquetas X/Y, orden invertido para cada modelo) y, si siguen en disputa, hay una ronda de refutación.
+- El código Python (opcional) es la única evidencia que cuenta como prueba; el acuerdo entre modelos no lo es.
+- Cada corrida genera `INFORME.md`: cuántas discrepancias aparecieron, qué errores se confirmaron y cuánto se usó. Si no hubo discrepancias, el informe dice que el segundo modelo aportó poco.
+
+## Cuándo NO usarla
+- Preguntas simples, respuestas rápidas o problemas objetivos que un cálculo o script resuelve: usar un solo modelo más código.
+- Datos sensibles o de terceros sin que el usuario lo confirme: el contenido se envía a los servidores de DeepSeek.
 
 ## Requisitos
-- Python 3 (sin librerías extra) y estos archivos, todos en la MISMA carpeta de esta skill: `duo.py`, `duo.config.json`, `deepseek_api.py`. No se usa git ni ningún repositorio.
-- Variable de entorno `DEEPSEEK_API_KEY` definida en el equipo del usuario (nunca escribirla en archivos ni mostrarla).
-- Cada modelo configurado como comando de shell que lee el prompt por stdin y responde por stdout.
-  Ejemplo: `["claude","-p"]` y `["ollama","run","deepseek-r1"]` (verificar nombres con `claude --help` y `ollama list`).
+- Python 3 (sin librerías extra) y estos archivos juntos en la carpeta de esta skill: `duo.py`, `duo.config.json`, `deepseek_api.py`.
+- Variable de entorno `DEEPSEEK_API_KEY` definida en el equipo del usuario (nunca pedirla, escribirla ni mostrarla).
+- `claude` instalado y con sesión iniciada (el script lo usa con `claude -p`).
+- No se usa git ni ningún repositorio.
 
 ## Procedimiento
-1. Confirmar con el usuario la tarea exacta y qué se considera "dato verificable" (cálculos, fuentes, etc.).
-2. Ubicar la carpeta de esta skill (la que contiene este SKILL.md; si no se conoce la ruta, buscar `duo.py` bajo `~/.claude/skills` o `.claude/skills`). Comprobar con `python3 <carpeta>/duo.py --ping` (en Windows puede ser `python` en vez de `python3`).
-   Ejecutar: `python3 <carpeta>/duo.py "<tarea>" --rounds 3` (añadir `--run-code` solo si el usuario acepta ejecutar código escrito por los modelos).
-3. Leer `duo_output/PENDIENTES.md` y `duo_output/log.txt` (se crean en la carpeta de trabajo actual); presentar al usuario `FINAL.md` junto con los pendientes.
+1. Pide al usuario: la tarea exacta, los datos pegados dentro del texto (el script no recibe adjuntos), el formato del entregable y qué cuenta como verificable.
+2. Avisa antes de ejecutar: son típicamente 5 a 10 llamadas con cargas pequeñas (estimación por diseño, no medida), y los datos viajan a DeepSeek. Confirma que está de acuerdo.
+3. Prueba la conexión: `python3 ${CLAUDE_SKILL_DIR}/duo.py --ping` (en Windows puede ser `python`). Si falla, muestra el error y detente.
+4. Ejecuta: `python3 ${CLAUDE_SKILL_DIR}/duo.py --file tarea.txt --rounds 2` (guarda la tarea en `tarea.txt`). Añade `--run-code` solo si el usuario acepta que se ejecute código escrito por los modelos (20 s máx. cada uno).
+5. Lee `duo_output/INFORME.md`, `duo_output/PENDIENTES.md` y `duo_output/log.txt` (se crean en la carpeta de trabajo actual).
+6. Entrega al usuario: `FINAL.md`, un resumen del informe y los pendientes destacados aparte.
 
 ## Reglas
-- Que ambos modelos aprueben NO prueba que sea verdad: errores correlados son posibles. Decirlo siempre.
-- Nunca presentar como verificado algo que quedó en PENDIENTES.md.
-- No inventar fuentes, cifras ni citas; lo no comprobable se marca "(no verificado)".
-- Priorizar evidencia externa (código que recalcula, fuentes reales) sobre el acuerdo entre modelos.
-- Los puntos en desacuerdo se resuelven con evidencia o se escalan al usuario.
+- Que ambos modelos coincidan o aprueben NO prueba que sea verdad (pueden compartir el error). Dilo siempre.
+- Nunca presentes como verificado algo de `PENDIENTES.md` ni las "coincidencias de riesgo alto sin verificación externa".
+- No edites `FINAL.md` con tu propio conocimiento; si propones un cambio, indícalo por separado.
+- No inventes fuentes, cifras ni citas; lo no comprobable se marca "(no verificado)".
+- Si el log indica "JSON inválido" o "llamada extra", avisa que esa parte de la verificación fue más débil.
 
-## Pendiente por definir
-- Búsqueda web compartida (mismas fuentes para ambos modelos).
-- Calibrar rúbrica sí/no según tipo de tarea (datos, investigación, código, redacción).
+## Limitaciones conocidas
+- No busca en la web: los hechos sin cálculo que lo compruebe quedan como no verificados.
+- La calidad depende de que los modelos devuelvan JSON válido; un modelo pequeño puede fallar (se reintenta una vez).
+- Aún no probado con la API real de DeepSeek ni con tareas reales; el nombre del modelo (`deepseek-chat` por defecto, cambiable con `DEEPSEEK_MODEL`) y la URL de la API deben confirmarse en la documentación oficial.
+- `claude -p` podría disponer de herramientas en la carpeta de trabajo; verificar con `claude --help` cómo restringirlas.
 
 ````
 
@@ -104,7 +108,8 @@ El usuario quiere que dos modelos hagan el mismo trabajo, se verifiquen mutuamen
 ````json
 {
   "claude":   { "cmd": ["claude", "-p"], "timeout": 900 },
-  "deepseek": { "cmd": ["{python}", "deepseek_api.py"], "timeout": 900 }
+  "deepseek": { "cmd": ["{python}", "deepseek_api.py"], "timeout": 900 },
+  "_roles":   { "aligner": "deepseek", "merger": "claude" }
 }
 
 ````
@@ -152,18 +157,24 @@ except (KeyError, IndexError, ValueError) as e:
 
 ````python
 #!/usr/bin/env python3
-"""Claude + DeepSeek v2: mismo trabajo, verificación por afirmaciones y parches puntuales.
+"""Claude + DeepSeek v3 (eficiente): ambos hacen el trabajo; solo se gasta en lo que discrepan.
 
-Flujo: generar (ambos, independientes) -> [ronda: extraer afirmaciones -> revisión ciega cruzada
--> alinear y detectar desacuerdos -> evidencia con código (opcional) -> parches puntuales]
--> fusión -> comprobación final sí/no por ambos -> FINAL.md + PENDIENTES.md.
+Flujo (≈6-10 llamadas, con cargas pequeñas):
+  1 generar (ambos, independientes; cada uno entrega trabajo + lista de afirmaciones en la MISMA llamada)
+  2 alinear afirmaciones A vs B (1 llamada, solo textos cortos) -> acuerdo / conflicto / solo_a / solo_b
+  3 arbitrar SOLO las disputas (conflictos y afirmaciones de riesgo alto que solo dijo uno):
+    revisión ciega con etiquetas X/Y (orden invertido para cada modelo); si no coinciden, ronda de refutación
+  4 fusionar (1 llamada) aplicando las decisiones; lo no resuelto queda "(no verificado)"
+  5 comprobación final sí/no por el OTRO modelo (1 llamada)
+Salidas en ./duo_output: FINAL.md, INFORME.md (qué aportó el 2.º modelo y uso), PENDIENTES.md, log.txt, JSON de cada paso.
 
 Cada modelo es un comando de shell (prompt por stdin, respuesta por stdout): ver duo.config.json.
-Autocontenido: solo necesita Python 3 y esta carpeta (duo.py, duo.config.json, deepseek_api.py). Sin git ni dependencias.
+Autocontenido: solo Python 3 y esta carpeta (duo.py, duo.config.json, deepseek_api.py). Sin git ni dependencias.
 
 Uso:
-    python3 duo.py "tu tarea" [--rounds 3] [--run-code] [--out duo_output]
+    python3 duo.py "tu tarea" [--rounds 2] [--run-code] [--out duo_output]
     python3 duo.py --file tarea.txt
+    python3 duo.py --ping
 """
 import argparse
 import json
@@ -174,64 +185,69 @@ import tempfile
 import time
 from pathlib import Path
 
+MARK = "===AFIRMACIONES==="
+
 CHECKLIST = {
     "cumple_la_tarea": "¿Cumple exactamente lo pedido?",
     "cifras_con_respaldo": "¿Cada cifra/dato tiene respaldo o está marcada como no verificada?",
     "totales_coherentes": "¿Totales, porcentajes y cálculos son coherentes?",
-    "sin_contradicciones": "¿No hay contradicciones internas?",
+    "sin_contradicciones": "¿No hay contradicciones internas ni con las decisiones tomadas?",
     "sin_invenciones": "¿No hay fuentes, citas o datos inventados?",
 }
 
 GEN = """[PASO:generar]
 {task}
 
-Reglas: no inventes datos, cifras, fuentes ni citas. Marca "(no verificado)" lo que no puedas comprobar."""
+Reglas: no inventes datos, cifras, fuentes ni citas. Marca "(no verificado)" lo que no puedas comprobar.
+Formato: primero el trabajo completo. Después, en una línea sola, {mark} y a continuación SOLO un JSON compacto
+con las afirmaciones comprobables del trabajo (cifras, fechas, hechos, cálculos, relaciones causales):
+[{{"id":"c1","texto":"...","tipo":"numerica|hecho|logica","riesgo":"alto|bajo"}}]"""
 
 EXTRACT = """[PASO:extraer]
-Extrae del siguiente trabajo TODAS las afirmaciones comprobables (cifras, fechas, hechos, relaciones, cálculos).
+Extrae del trabajo TODAS las afirmaciones comprobables.
 <trabajo>
 {work}
 </trabajo>
-Responde SOLO un JSON: [{{"id":"c1","texto":"...","tipo":"numerica|hecho|logica"}}, ...]"""
-
-REVIEW = """[PASO:revisar]
-Tarea original: {task}
-Revisa de forma independiente estas afirmaciones del trabajo de otro autor. Limpia (duplicados, formato),
-verifica datos y confiabilidad; no asumas que son correctas. Si no puedes comprobarla, di UNVERIFIED.
-<trabajo>
-{work}
-</trabajo>
-<afirmaciones>
-{claims}
-</afirmaciones>
-Responde SOLO un JSON: [{{"id":"c1","veredicto":"OK|ERROR|UNVERIFIED","motivo":"..."}}, ...]"""
+Responde SOLO un JSON: [{{"id":"c1","texto":"...","tipo":"numerica|hecho|logica","riesgo":"alto|bajo"}}]"""
 
 ALIGN = """[PASO:alinear]
-Compara dos listas de afirmaciones sobre la misma tarea y agrúpalas por tema.
-Lista A: {a}
-Lista B: {b}
-Responde SOLO un JSON: [{{"tema":"...","a_ids":["c1"],"b_ids":["c3"],"estado":"acuerdo|conflicto|solo_a|solo_b"}}, ...]
-Usa "conflicto" solo si A y B afirman cosas incompatibles sobre lo mismo."""
+Agrupa por tema las afirmaciones de dos versiones independientes del mismo trabajo.
+A: {a}
+B: {b}
+Responde SOLO un JSON: [{{"tema":"...","a_ids":["c1"],"b_ids":["c3"],"estado":"acuerdo|conflicto|solo_a|solo_b"}}]
+"conflicto" solo si afirman cosas incompatibles sobre lo mismo."""
 
-CODE = """[PASO:codigo]
-Para cada problema que se pueda comprobar de forma determinista (cálculos, sumas, porcentajes, fechas,
-lógica), escribe código Python autocontenido que imprima el resultado. Si no se puede, omítelo.
-<problemas>
-{issues}
-</problemas>
-Responde SOLO un JSON: [{{"iid":"i1","codigo":"print(...)"}}, ...]"""
+ARBITRATE = """[PASO:arbitrar]
+Tarea original: {task}
+Dos versiones independientes (X e Y) difieren en estos puntos. Decide cuál es correcta con tu conocimiento y
+razonamiento, sin asumir que alguna tiene razón. Si no puedes afirmarlo con seguridad responde "incierto" (no adivines).
+Si se puede comprobar con un cálculo, añade "codigo": Python autocontenido que imprima el resultado.
+<puntos>
+{items}
+</puntos>
+Responde SOLO un JSON: [{{"iid":"d1","veredicto":"X|Y|ninguna|incierto","correcta":"valor o texto correcto (corto)","razon":"1-2 frases","codigo":"(opcional)"}}]"""
+
+REFUTE = """[PASO:refutar]
+Tarea original: {task}
+Estos puntos siguen sin acuerdo entre los dos revisores. Para cada uno ves tu veredicto previo, el del otro revisor
+(con su razón) y la evidencia de código. Reconsidera: si el otro tiene razón, cámbialo; si no, refuta su razón.
+Si sigues sin poder comprobarlo, "incierto".
+<puntos>
+{items}
+</puntos>
+Responde SOLO un JSON: [{{"iid":"d1","veredicto":"X|Y|ninguna|incierto","correcta":"...","razon":"...","codigo":"(opcional)"}}]"""
 
 PATCH = """[PASO:parchear]
 Tarea original: {task}
 <trabajo>
 {work}
 </trabajo>
-<problemas_y_evidencia>
+<problemas>
 {issues}
-</problemas_y_evidencia>
-Corrige SOLO lo necesario con cambios puntuales (no reescribas todo). Si un problema es un falso positivo, ignóralo.
-Si algo no se puede comprobar, cámbialo por "(no verificado)". "buscar" debe ser texto EXACTO y único del trabajo.
-Responde SOLO un JSON: [{{"buscar":"...","reemplazar":"...","motivo":"..."}}, ...]"""
+</problemas>
+Corrige SOLO lo necesario con cambios puntuales (no reescribas todo). Si algo no se puede comprobar, cámbialo por
+"(no verificado)". "buscar" debe ser texto EXACTO y único del trabajo.
+Responde SOLO un JSON: [{{"buscar":"...","reemplazar":"...","motivo":"..."}}]"""
 
 MERGE = """[PASO:fusionar]
 Tarea original: {task}
@@ -241,25 +257,31 @@ Tarea original: {task}
 <version_b>
 {b}
 </version_b>
-<puntos_sin_resolver>
+<decisiones_verificadas>
+{decisions}
+</decisiones_verificadas>
+<sin_resolver>
 {pending}
-</puntos_sin_resolver>
-Une ambas versiones en UN solo trabajo, sin duplicados, bien estructurado y redactado. Reglas: no agregues
-afirmaciones nuevas que no estén en A o B; ante discrepancias, usa lo mejor sustentado; los puntos sin
-resolver deben quedar marcados "(no verificado)". Entrega solo el trabajo."""
+</sin_resolver>
+Une ambas versiones en UN solo trabajo, sin duplicados, bien estructurado y redactado. Reglas: aplica las decisiones
+verificadas; los puntos sin_resolver quedan marcados "(no verificado)"; no agregues afirmaciones nuevas que no estén
+en A o B. Entrega solo el trabajo."""
 
 FINAL = """[PASO:final]
 Tarea original: {task}
 <trabajo>
 {work}
 </trabajo>
+<decisiones_verificadas>
+{decisions}
+</decisiones_verificadas>
 Responde cada pregunta con true/false de forma estricta:
 {checklist}
 Responde SOLO un JSON: {{"checklist":{{{keys}}},"problemas":["..."]}}"""
 
 
 def resolve_cmd(cmd):
-    """{python} -> intérprete actual; archivos que viven junto a duo.py -> ruta absoluta (funciona desde cualquier carpeta)."""
+    """{python} -> intérprete actual; archivos junto a duo.py -> ruta absoluta (funciona desde cualquier carpeta)."""
     here, out = Path(__file__).resolve().parent, []
     for part in cmd:
         if part == "{python}":
@@ -282,12 +304,39 @@ def parse_json(text):
     return best
 
 
+def compact(obj):
+    return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+
+
+def split_work(text):
+    """Separa el trabajo de la lista de afirmaciones que el modelo añade tras MARK."""
+    if MARK in text:
+        body, tail = text.rsplit(MARK, 1)
+        claims = parse_json(tail)
+        return body.strip(), claims if isinstance(claims, list) else None
+    return text.strip(), None
+
+
+def is_high(c):
+    return c.get("riesgo") == "alto" or (not c.get("riesgo") and c.get("tipo") == "numerica")
+
+
 class Duo:
     def __init__(self, cfg, out, run_code):
-        self.cfg, self.out, self.run_code = cfg, out, run_code
-        self.models = list(cfg)[:2]
+        self.cfg = {k: v for k, v in cfg.items() if not k.startswith("_")}
+        self.models = list(self.cfg)[:2]
+        a, b = self.models
+        roles = cfg.get("_roles", {})
+        self.aligner = roles.get("aligner", b)
+        self.merger = roles.get("merger", a)
+        for r in (self.aligner, self.merger):
+            if r not in self.models:
+                raise SystemExit(f"_roles apunta a un modelo que no existe en la config: {r}")
+        self.finalizer = b if self.merger == a else a
+        self.out, self.run_code, self.usage = out, run_code, {}
         out.mkdir(parents=True, exist_ok=True)
 
+    # ---------- utilidades ----------
     def log(self, msg):
         print(msg, flush=True)
         with open(self.out / "log.txt", "a") as f:
@@ -298,153 +347,224 @@ class Duo:
         (self.out / name).write_text(text)
 
     def ask(self, model, prompt):
-        c = self.cfg[model]
+        c, last = self.cfg[model], ""
         for _ in range(2):
-            p = subprocess.run(resolve_cmd(c["cmd"]), input=prompt, capture_output=True, text=True,
-                               timeout=c.get("timeout", 900))
+            try:
+                p = subprocess.run(resolve_cmd(c["cmd"]), input=prompt, capture_output=True, text=True,
+                                   timeout=c.get("timeout", 900))
+            except FileNotFoundError:
+                raise RuntimeError(f"{model}: no se encontró el comando {c['cmd'][0]!r}; revisa duo.config.json")
+            except subprocess.TimeoutExpired:
+                last = "timeout"
+                self.log(f"  [{model}] timeout")
+                continue
             txt = re.sub(r"<think>.*?</think>", "", p.stdout, flags=re.S).strip()
             if p.returncode == 0 and txt:
+                u = self.usage.setdefault(model, [0, 0, 0])
+                u[0] += 1
+                u[1] += len(prompt)
+                u[2] += len(txt)
                 return txt
-            self.log(f"  [{model}] fallo rc={p.returncode} {p.stderr.strip()[:200]}")
+            last = f"rc={p.returncode} {p.stderr.strip()[:200]}"
+            self.log(f"  [{model}] fallo {last}")
             time.sleep(2)
-        raise RuntimeError(f"{model} no respondió: revisa su comando en la config")
+        raise RuntimeError(f"{model} no respondió ({last}); revisa su comando y su configuración")
 
     def ask_json(self, model, prompt):
-        txt = self.ask(model, prompt)
-        data = parse_json(txt)
+        data = parse_json(self.ask(model, prompt))
         if data is None:
-            txt = self.ask(model, prompt + "\n\nTu respuesta anterior no era JSON válido. Responde SOLO JSON.")
-            data = parse_json(txt)
+            data = parse_json(self.ask(model, prompt + "\n\nTu respuesta anterior no era JSON válido. Responde SOLO JSON."))
         if data is None:
-            self.log(f"  [{model}] JSON inválido, se ignora este paso")
+            self.log(f"  [{model}] JSON inválido, se omite este paso")
             return []
         return data
 
     def run_snippet(self, code):
         with tempfile.TemporaryDirectory() as d:
             try:
-                p = subprocess.run([sys.executable, "-c", code], cwd=d, capture_output=True,
-                                   text=True, timeout=20)
+                p = subprocess.run([sys.executable, "-c", code], cwd=d, capture_output=True, text=True, timeout=20)
                 return (p.stdout + p.stderr).strip()[:1000]
             except subprocess.TimeoutExpired:
                 return "timeout"
 
-    def apply_patches(self, model, work, patches, round_no):
-        applied, failed = [], []
+    def apply_patches(self, work, patches):
+        applied = failed = 0
         for p in patches if isinstance(patches, list) else []:
-            f, r = p.get("buscar", ""), p.get("reemplazar", "")
+            f, r = (p.get("buscar") or ""), p.get("reemplazar", "")
             if f and work.count(f) == 1:
-                work = work.replace(f, r)
-                applied.append(p)
+                work, applied = work.replace(f, r), applied + 1
             else:
-                failed.append(p)
-        self.log(f"  [{model}] parches aplicados={len(applied)} fallidos={len(failed)}")
-        return work, applied, failed
+                failed += 1
+        self.log(f"  parches aplicados={applied} fallidos={failed}")
+        return work
 
-    def issues_for(self, claims, verdicts, groups):
-        """Problemas por trabajo: errores/no verificados según el revisor + conflictos entre A y B."""
+    # ---------- disputas ----------
+    def labels(self, m):
+        """Para el modelo m: etiqueta X/Y -> versión real (A/B). Orden invertido entre modelos para evitar sesgo de posición."""
+        return {"X": "A", "Y": "B"} if m == self.models[0] else {"X": "B", "Y": "A"}
+
+    def build_disputes(self, claims, groups):
         a, b = self.models
-        text = {m: {c["id"]: c["texto"] for c in claims[m] if isinstance(c, dict) and "id" in c} for m in claims}
-        issues = []
-        for author, vs in verdicts.items():
-            for v in vs if isinstance(vs, list) else []:
-                if v.get("veredicto") in ("ERROR", "UNVERIFIED"):
-                    issues.append({"trabajo": author, "tipo": v["veredicto"],
-                                   "afirmacion": text[author].get(v.get("id"), v.get("id")),
-                                   "motivo": v.get("motivo", "")})
+        info = {a: {}, b: {}}
+        for m in (a, b):
+            for c in claims[m]:
+                if isinstance(c, dict) and c.get("id") and c.get("texto"):
+                    info[m][c["id"]] = c
+        disputes, agreed_high = [], []
         for g in groups if isinstance(groups, list) else []:
-            if g.get("estado") == "conflicto":
-                ta = [text[a].get(i, i) for i in g.get("a_ids", [])]
-                tb = [text[b].get(i, i) for i in g.get("b_ids", [])]
-                for m in (a, b):
-                    issues.append({"trabajo": m, "tipo": "CONFLICTO", "afirmacion": g.get("tema"),
-                                   "motivo": f"{a} dice {ta}; {b} dice {tb}"})
-        for n, i in enumerate(issues, 1):
-            i["iid"] = f"i{n}"
-        return issues
+            ca = [info[a][i] for i in g.get("a_ids", []) if i in info[a]]
+            cb = [info[b][i] for i in g.get("b_ids", []) if i in info[b]]
+            est, high = g.get("estado"), any(is_high(c) for c in ca + cb)
+            if est == "conflicto" or (est in ("solo_a", "solo_b") and high):
+                disputes.append({"iid": f"d{len(disputes) + 1}", "tema": g.get("tema", ""), "tipo": est,
+                                 "A": [c["texto"] for c in ca], "B": [c["texto"] for c in cb]})
+            elif est == "acuerdo" and high:
+                agreed_high.append(g.get("tema") or (ca or cb)[0]["texto"])
+        return disputes, agreed_high, {m: len(info[m]) for m in info}
 
+    def arbitrate(self, task, disputes, rounds):
+        a, b = self.models
+        history, evidence, resolved, unresolved = {}, {}, {}, list(disputes)
+        for r in range(1, rounds + 1):
+            if not unresolved:
+                break
+            self.log(f"3) Arbitraje ronda {r}: {len(unresolved)} punto(s) en disputa")
+            for m in self.models:
+                to_real = self.labels(m)
+                to_label = {v: k for k, v in to_real.items()}
+                items = []
+                for d in unresolved:
+                    it = {"iid": d["iid"], "tema": d["tema"], "X": d[to_real["X"]], "Y": d[to_real["Y"]]}
+                    if r > 1:
+                        h, other = history[d["iid"]], (b if m == a else a)
+                        lab = lambda v: to_label.get(v, v)
+                        it.update({"tu_veredicto": lab(h[m]["veredicto"]), "otro_veredicto": lab(h[other]["veredicto"]),
+                                   "otro_razon": h[other]["razon"], "evidencia": evidence.get(d["iid"], [])})
+                    items.append(it)
+                res = self.ask_json(m, (ARBITRATE if r == 1 else REFUTE).format(task=task, items=compact(items)))
+                for v in res if isinstance(res, list) else []:
+                    if not isinstance(v, dict) or v.get("iid") not in {d["iid"] for d in unresolved}:
+                        continue
+                    ver = to_real.get(v.get("veredicto"), v.get("veredicto"))
+                    ver = ver if ver in ("A", "B", "ninguna") else "incierto"
+                    history.setdefault(v["iid"], {})[m] = {"veredicto": ver, "correcta": v.get("correcta", ""),
+                                                           "razon": v.get("razon", "")}
+                    if self.run_code and v.get("codigo"):
+                        evidence.setdefault(v["iid"], []).append({"modelo": m, "salida": self.run_snippet(v["codigo"])})
+            still = []
+            for d in unresolved:
+                h = history.get(d["iid"], {})
+                va, vb = h.get(a, {}).get("veredicto"), h.get(b, {}).get("veredicto")
+                if va and va == vb and va != "incierto":
+                    resolved[d["iid"]] = {"tema": d["tema"], "veredicto": va, "ronda": r,
+                                          "correcta": h[a]["correcta"] or h[b]["correcta"],
+                                          "evidencia": evidence.get(d["iid"], [])}
+                else:
+                    still.append(d)
+            unresolved = still
+        return resolved, unresolved, history, evidence
+
+    # ---------- flujo principal ----------
     def main(self, task, rounds):
         a, b = self.models
-        self.log("1) Trabajo independiente")
-        work = {m: self.ask(m, GEN.format(task=task)) for m in self.models}
-        for m in work:
-            self.save(f"00_{m}_inicial.md", work[m])
+        self.log("1) Trabajo independiente (con afirmaciones incluidas)")
+        work, claims = {}, {}
+        for m in self.models:
+            work[m], cl = split_work(self.ask(m, GEN.format(task=task, mark=MARK)))
+            if cl is None:
+                self.log(f"  [{m}] sin lista de afirmaciones válida: llamada extra para extraerla")
+                cl = self.ask_json(m, EXTRACT.format(work=work[m]))
+            claims[m] = cl
+            self.save(f"00_{m}_trabajo.md", work[m])
+        self.save("01_afirmaciones.json", claims)
 
-        stats, changelog, issues = {}, [], []
-        for r in range(1, rounds + 1):
-            self.log(f"2) Ronda {r}: afirmaciones -> revisión ciega -> desacuerdos")
-            claims = {m: self.ask_json(m, EXTRACT.format(work=work[m])) for m in self.models}
-            verdicts = {}
-            for rev, auth in ((a, b), (b, a)):
-                verdicts[auth] = self.ask_json(rev, REVIEW.format(
-                    task=task, work=work[auth], claims=json.dumps(claims[auth], ensure_ascii=False)))
-            groups = self.ask_json(a, ALIGN.format(a=json.dumps(claims[a], ensure_ascii=False),
-                                                   b=json.dumps(claims[b], ensure_ascii=False)))
-            issues = self.issues_for(claims, verdicts, groups)
-            for m in self.models:
-                vs = [v.get("veredicto") for v in verdicts[m] if isinstance(v, dict)]
-                stats[(r, m)] = {k: vs.count(k) for k in ("OK", "ERROR", "UNVERIFIED")}
-            self.save(f"r{r}_afirmaciones.json", claims)
-            self.save(f"r{r}_veredictos.json", verdicts)
-            self.save(f"r{r}_problemas.json", issues)
-            self.log(f"   problemas detectados: {len(issues)} | " +
-                     ", ".join(f"{m}: {stats[(r, m)]}" for m in self.models))
-            if not issues:
-                self.log("   sin problemas nuevos: se detiene el bucle")
-                break
+        self.log("2) Alineación de afirmaciones")
+        short = {m: [[c.get("id"), c.get("texto")] for c in claims[m] if isinstance(c, dict)] for m in claims}
+        groups = self.ask_json(self.aligner, ALIGN.format(a=compact(short[a]), b=compact(short[b])))
+        disputes, agreed_high, counts = self.build_disputes(claims, groups)
+        self.save("02_alineacion.json", groups)
+        self.save("03_disputas.json", disputes)
+        self.log(f"   afirmaciones A={counts[a]} B={counts[b]} | disputas={len(disputes)} | "
+                 f"coincidencias de riesgo alto={len(agreed_high)}")
 
-            evidence = {}
-            if self.run_code:
-                for m in self.models:
-                    for item in self.ask_json(m, CODE.format(issues=json.dumps(issues, ensure_ascii=False))):
-                        if isinstance(item, dict) and item.get("codigo"):
-                            evidence.setdefault(item.get("iid"), []).append(
-                                {"modelo": m, "salida": self.run_snippet(item["codigo"])})
-                self.save(f"r{r}_evidencia.json", evidence)
-            for i in issues:
-                i["evidencia"] = evidence.get(i["iid"], [])
+        resolved, unresolved, history, evidence = self.arbitrate(task, disputes, rounds)
+        self.save("04_decisiones.json", resolved)
+        self.save("04_historial_arbitraje.json", {"historial": history, "evidencia": evidence})
 
-            for m in self.models:
-                mine = [i for i in issues if i["trabajo"] == m]
-                if not mine:
-                    continue
-                patches = self.ask_json(m, PATCH.format(task=task, work=work[m],
-                                                        issues=json.dumps(mine, ensure_ascii=False)))
-                work[m], ok, bad = self.apply_patches(m, work[m], patches, r)
-                changelog.append({"ronda": r, "modelo": m, "aplicados": ok, "fallidos": bad})
-                self.save(f"r{r}_{m}_corregido.md", work[m])
-        self.save("changelog.json", changelog)
+        self.log(f"4) Fusión por {self.merger}")
+        decisions = [{"tema": v["tema"], "correcta": v["correcta"]} for v in resolved.values()]
+        pending = [{"tema": d["tema"], "A": d["A"], "B": d["B"]} for d in unresolved]
+        merged = self.ask(self.merger, MERGE.format(task=task, a=work[a], b=work[b],
+                                                    decisions=compact(decisions), pending=compact(pending)))
 
-        pending = [i for i in issues if not i.get("evidencia")] if issues else []
-        self.log("3) Fusión")
-        merged = self.ask(a, MERGE.format(task=task, a=work[a], b=work[b],
-                                          pending=json.dumps(pending, ensure_ascii=False)))
-        self.log("4) Comprobación final sí/no por ambos")
-        final_problems = []
+        self.log(f"5) Comprobación final por {self.finalizer}")
+        cl = "\n".join(f"- {k}: {v}" for k, v in CHECKLIST.items())
+        keys = ", ".join(f'"{k}": true' for k in CHECKLIST)
+        final_problems, failed = [], []
         for attempt in range(2):
-            results = {}
-            cl = "\n".join(f"- {k}: {v}" for k, v in CHECKLIST.items())
-            keys = ", ".join(f'"{k}": true' for k in CHECKLIST)
-            for m in self.models:
-                res = self.ask_json(m, FINAL.format(task=task, work=merged, checklist=cl, keys=keys))
-                results[m] = res if isinstance(res, dict) else {}
-            self.save("final_checks.json", results)
-            final_problems = [p for m in self.models for p in results[m].get("problemas", []) if p]
-            failed = [k for m in self.models for k, v in results[m].get("checklist", {}).items() if v is not True]
+            res = self.ask_json(self.finalizer, FINAL.format(task=task, work=merged, decisions=compact(decisions),
+                                                              checklist=cl, keys=keys))
+            res = res if isinstance(res, dict) else {}
+            final_problems = [p for p in res.get("problemas", []) if p]
+            failed = [k for k, v in (res.get("checklist") or {}).items() if v is not True]
+            self.save("05_comprobacion_final.json", res)
             self.log(f"   puntos fallidos: {failed or 'ninguno'}")
             if not failed and not final_problems:
                 break
             if attempt == 0:
-                patches = self.ask_json(a, PATCH.format(task=task, work=merged, issues=json.dumps(
-                    {"checklist_fallido": failed, "problemas": final_problems}, ensure_ascii=False)))
-                merged, _, _ = self.apply_patches(a, merged, patches, "final")
+                patches = self.ask_json(self.merger, PATCH.format(
+                    task=task, work=merged, issues=compact({"checklist_fallido": failed, "problemas": final_problems})))
+                merged = self.apply_patches(merged, patches)
 
         self.save("FINAL.md", merged)
-        lines = ["# Pendientes para revisión humana\n"]
-        lines += [f"- [{p['tipo']}] {p['afirmacion']}: {p['motivo']}" for p in pending]
-        lines += [f"- [FINAL] {p}" for p in final_problems]
-        self.save("PENDIENTES.md", "\n".join(lines) if len(lines) > 1 else "# Sin pendientes detectados\n")
-        self.log(f"Listo -> {self.out / 'FINAL.md'} y PENDIENTES.md (revísalo: que ambos aprueben no es prueba de verdad)")
+        self.report(counts, disputes, agreed_high, resolved, unresolved, history, evidence, final_problems, failed)
+        self.log(f"Listo -> {self.out / 'FINAL.md'}, INFORME.md y PENDIENTES.md")
+
+    def report(self, counts, disputes, agreed_high, resolved, unresolved, history, evidence, final_problems, failed):
+        a, b = self.models
+        wrong = {a: 0, b: 0}
+        for v in resolved.values():
+            if v["veredicto"] == "A":
+                wrong[b] += 1
+            elif v["veredicto"] == "B":
+                wrong[a] += 1
+            else:
+                wrong[a] += 1
+                wrong[b] += 1
+        with_code = sum(1 for v in resolved.values() if v["evidencia"])
+        L = ["# Informe de la corrida", "",
+             f"- Afirmaciones: {a}={counts[a]}, {b}={counts[b]}",
+             f"- Disputas (conflictos y afirmaciones de riesgo alto que solo dijo uno): {len(disputes)}",
+             f"- Resueltas con acuerdo de ambos revisores: {len(resolved)} (con evidencia de código: {with_code})",
+             f"- Sin resolver (van a PENDIENTES.md): {len(unresolved)}",
+             f"- Errores confirmados por ambos revisores: {a}={wrong[a]}, {b}={wrong[b]}",
+             f"- Coincidencias de riesgo alto SIN verificación externa: {len(agreed_high)}", ""]
+        L.append("## Lectura honesta")
+        if not disputes:
+            L.append("Los modelos no discreparon en nada relevante. Eso NO prueba que sea correcto (pueden compartir "
+                     "el mismo error): para esta tarea el segundo modelo aportó poco; para tareas parecidas quizá "
+                     "baste un modelo más código de verificación.")
+        else:
+            L.append(f"La comparación detectó {len(disputes)} discrepancia(s) que un solo modelo no habría mostrado. "
+                     "Que dos revisores coincidan sobre una disputa no es una prueba: solo la evidencia de código lo es.")
+        if agreed_high:
+            L += ["", "## Coinciden ambos pero sin verificación externa (riesgo alto)"] + [f"- {t}" for t in agreed_high]
+        L += ["", "## Uso (aproximado; ~4 caracteres ≈ 1 token, estimación grosera)"]
+        for m, (n, ci, co) in self.usage.items():
+            L.append(f"- {m}: {n} llamadas, {ci} caracteres enviados, {co} recibidos")
+        self.save("INFORME.md", "\n".join(L) + "\n")
+
+        P = ["# Pendientes para revisión humana", ""]
+        for d in unresolved:
+            h = history.get(d["iid"], {})
+            P.append(f"- [SIN RESOLVER] {d['tema']}: A={d['A']} | B={d['B']}")
+            for m, v in h.items():
+                P.append(f"    - {m}: {v['veredicto']} — {v['razon']}")
+            for e in evidence.get(d["iid"], []):
+                P.append(f"    - evidencia código ({e['modelo']}): {e['salida']}")
+        P += [f"- [FINAL] {p}" for p in final_problems]
+        P += [f"- [CHECKLIST FALLIDO] {k}" for k in failed]
+        self.save("PENDIENTES.md", "\n".join(P) + "\n" if len(P) > 2 else "# Sin pendientes detectados\n")
 
 
 def main():
@@ -452,24 +572,29 @@ def main():
     ap.add_argument("task", nargs="?")
     ap.add_argument("--file")
     ap.add_argument("--config", default=str(Path(__file__).resolve().with_name("duo.config.json")))
-    ap.add_argument("--rounds", type=int, default=3)
+    ap.add_argument("--rounds", type=int, default=2,
+                    help="rondas de arbitraje: 1 = revisión ciega; 2 = además refutación de lo que siga en disputa")
     ap.add_argument("--run-code", action="store_true",
-                    help="ejecuta el código Python que escriban los modelos para comprobar cálculos (20 s máx., revisa antes)")
+                    help="ejecuta el código Python que propongan los modelos para comprobar cálculos (20 s máx.; revisa antes)")
     ap.add_argument("--out", default="duo_output")
     ap.add_argument("--ping", action="store_true", help="prueba rápida: pregunta 'OK' a cada modelo y sale")
     args = ap.parse_args()
+    duo = Duo(json.loads(Path(args.config).read_text()), Path(args.out), args.run_code)
     if args.ping:
-        d = Duo(json.loads(Path(args.config).read_text()), Path(args.out), False)
-        for m in d.models:
+        for m in duo.models:
             try:
-                print(f"{m}: {d.ask(m, 'Responde solo con la palabra OK')[:80]!r}")
-            except Exception as e:
+                print(f"{m}: {duo.ask(m, 'Responde solo con la palabra OK')[:80]!r}")
+            except RuntimeError as e:
                 print(f"{m}: FALLO -> {e}")
         return
     task = Path(args.file).read_text() if args.file else args.task
     if not task:
         ap.error("da una tarea o --file")
-    Duo(json.loads(Path(args.config).read_text()), Path(args.out), args.run_code).main(task, args.rounds)
+    try:
+        duo.main(task, args.rounds)
+    except RuntimeError as e:
+        duo.log(f"ERROR: {e}\nSe conservó lo generado hasta ese punto en {duo.out}/")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
