@@ -1,10 +1,13 @@
 ---
 name: duo-verificacion
-description: Hace que Claude y DeepSeek resuelvan el mismo trabajo de forma independiente, compara sus afirmaciones, arbitra solo los desacuerdos (con código cuando se pueda), fusiona en un único entregable y reporta qué aportó el segundo modelo y qué queda sin verificar. Úsala cuando el usuario pida que Claude y DeepSeek trabajen juntos, se revisen, se verifiquen entre sí o unifiquen resultados en un trabajo de análisis, datos, investigación o redacción donde un error cuesta caro. No la uses para preguntas simples ni cálculos que un script resuelve.
+description: Hace que Claude y DeepSeek resuelvan el mismo trabajo de forma independiente, compara sus afirmaciones, arbitra solo los desacuerdos (con código cuando se pueda), fusiona en un único entregable y reporta qué aportó el segundo modelo y qué queda sin verificar. Úsala SOLO si el usuario lo pide explícitamente y el trabajo exige verificación extrema (cifras, datos o afirmaciones donde un error cuesta caro). No la actives por tu cuenta ni para tareas repetitivas, básicas, preguntas simples o cálculos que un script resuelve.
 disable-model-invocation: true
 ---
 
 # Dúo de verificación (Claude + DeepSeek) — BORRADOR
+
+## Cuándo usarla (restringido)
+Solo si el usuario la pide de forma explícita (por ejemplo con `/duo-verificacion`) Y el trabajo exige verificación extrema. Nunca para tareas repetitivas o básicas.
 
 ## Qué la hace distinta de usar un solo modelo
 - Los dos modelos trabajan **sin verse** y entregan sus afirmaciones comprobables; el script compara y solo gasta tokens en **lo que discrepan**.

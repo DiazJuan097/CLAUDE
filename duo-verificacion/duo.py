@@ -348,7 +348,10 @@ class Duo:
                                                               checklist=cl, keys=keys))
             res = res if isinstance(res, dict) else {}
             final_problems = [p for p in res.get("problemas", []) if p]
-            failed = [k for k, v in (res.get("checklist") or {}).items() if v is not True]
+            cl_res = res.get("checklist") if isinstance(res.get("checklist"), dict) else {}
+            if not cl_res:
+                final_problems.append("La comprobación final no devolvió un checklist legible: NO cuenta como aprobación")
+            failed = [k for k in CHECKLIST if cl_res.get(k) is not True]  # lo que falte cuenta como fallo
             self.save("05_comprobacion_final.json", res)
             self.log(f"   puntos fallidos: {failed or 'ninguno'}")
             if not failed and not final_problems:

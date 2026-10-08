@@ -37,7 +37,7 @@ verificación con código; un entregable unificado; informe de qué aportó el s
   ~/.claude/skills/NOMBRE/SKILL.md; variable ${CLAUDE_SKILL_DIR}; campo disable-model-invocation.
 
 ## 4. Estado real (honesto)
-Probado con modelos SIMULADOS: flujo completo (incluida 2.ª ronda y código), caso sin disputas, comando inexistente, timeout, desde otra carpeta;
+Probado con modelos SIMULADOS (incluye: una comprobación final vacía/ilegible NO cuenta como aprobación): flujo completo (incluida 2.ª ronda y código), caso sin disputas, comando inexistente, timeout, desde otra carpeta;
 adaptador deepseek_api.py contra servidor HTTP falso; `claude -p` respondió "OK" en el entorno de creación.
 NO probado: API real de DeepSeek; calidad real del JSON de los modelos; costo/tiempo reales; que el alineamiento de afirmaciones por LLM sea fiable.
 A confirmar en documentación oficial: modelo DeepSeek vigente (`deepseek-chat` por defecto, DEEPSEEK_MODEL), URL base https://api.deepseek.com
@@ -58,11 +58,14 @@ y /chat/completions, ${CLAUDE_SKILL_DIR}, y qué herramientas puede usar `claude
 ````markdown
 ---
 name: duo-verificacion
-description: Hace que Claude y DeepSeek resuelvan el mismo trabajo de forma independiente, compara sus afirmaciones, arbitra solo los desacuerdos (con código cuando se pueda), fusiona en un único entregable y reporta qué aportó el segundo modelo y qué queda sin verificar. Úsala cuando el usuario pida que Claude y DeepSeek trabajen juntos, se revisen, se verifiquen entre sí o unifiquen resultados en un trabajo de análisis, datos, investigación o redacción donde un error cuesta caro. No la uses para preguntas simples ni cálculos que un script resuelve.
+description: Hace que Claude y DeepSeek resuelvan el mismo trabajo de forma independiente, compara sus afirmaciones, arbitra solo los desacuerdos (con código cuando se pueda), fusiona en un único entregable y reporta qué aportó el segundo modelo y qué queda sin verificar. Úsala SOLO si el usuario lo pide explícitamente y el trabajo exige verificación extrema (cifras, datos o afirmaciones donde un error cuesta caro). No la actives por tu cuenta ni para tareas repetitivas, básicas, preguntas simples o cálculos que un script resuelve.
 disable-model-invocation: true
 ---
 
 # Dúo de verificación (Claude + DeepSeek) — BORRADOR
+
+## Cuándo usarla (restringido)
+Solo si el usuario la pide de forma explícita (por ejemplo con `/duo-verificacion`) Y el trabajo exige verificación extrema. Nunca para tareas repetitivas o básicas.
 
 ## Qué la hace distinta de usar un solo modelo
 - Los dos modelos trabajan **sin verse** y entregan sus afirmaciones comprobables; el script compara y solo gasta tokens en **lo que discrepan**.
@@ -506,7 +509,10 @@ class Duo:
                                                               checklist=cl, keys=keys))
             res = res if isinstance(res, dict) else {}
             final_problems = [p for p in res.get("problemas", []) if p]
-            failed = [k for k, v in (res.get("checklist") or {}).items() if v is not True]
+            cl_res = res.get("checklist") if isinstance(res.get("checklist"), dict) else {}
+            if not cl_res:
+                final_problems.append("La comprobación final no devolvió un checklist legible: NO cuenta como aprobación")
+            failed = [k for k in CHECKLIST if cl_res.get(k) is not True]  # lo que falte cuenta como fallo
             self.save("05_comprobacion_final.json", res)
             self.log(f"   puntos fallidos: {failed or 'ninguno'}")
             if not failed and not final_problems:
